@@ -1,2 +1,6 @@
 .zig-cache/
 zig-out/
+
+endpoint_config.zig
+*_auth_key
+.env
