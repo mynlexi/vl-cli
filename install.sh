@@ -8,6 +8,61 @@ NC='\033[0m' # No Color
 
 echo "Installing VLCLI..."
 
+# Function to check if a variable exists in .env
+check_env_var() {
+    local var_name=$1
+    if ! grep -q "^${var_name}=" .env; then
+        echo -e "${RED}Error: ${var_name} not found in .env${NC}"
+        return 1
+    fi
+    local var_value=$(grep "^${var_name}=" .env | cut -d '=' -f2-)
+    if [ -z "$var_value" ]; then
+        echo -e "${RED}Error: ${var_name} is empty in .env${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}✓${NC} Found ${var_name}=${var_value}"
+    return 0
+}
+
+# Check if .env exists
+if [ ! -f .env ]; then
+    echo -e "${RED}Error: .env file not found${NC}"
+    if [ -f .env.example ]; then
+        echo -e "${YELLOW}Tip: Copy .env.example to .env and fill in your values:${NC}"
+        echo "cp .env.example .env"
+    fi
+    exit 1
+fi
+
+echo -e "\nValidating environment variables..."
+
+# Required variables
+required_vars=(
+    "LOCAL_BASE_URL"
+    "LOCAL_AUTH_HEADER_NAME"
+    "LOCAL_AUTH_HEADER_VALUE"
+    "PROD_BASE_URL"
+    "PROD_AUTH_HEADER_NAME"
+    "PROD_AUTH_HEADER_VALUE"
+)
+
+# Check all required variables
+failed=0
+for var in "${required_vars[@]}"; do
+    if ! check_env_var "$var"; then
+        failed=1
+    fi
+done
+
+if [ $failed -eq 1 ]; then
+    echo -e "\n${RED}Environment validation failed!${NC}"
+    echo -e "${YELLOW}Please check your .env file and ensure all required variables are set.${NC}"
+    exit 1
+fi
+
+echo -e "\n${GREEN}Environment validation successful!${NC}"
+
+
 # Check if zig is installed
 if ! command -v zig &> /dev/null; then
     echo -e "${RED}Error: zig is not installed${NC}"

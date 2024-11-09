@@ -133,7 +133,7 @@ pub fn main() !void {
         std.debug.print("\nProduction mode: {}\n", .{is_prod});
 
         // Build URL with parameters
-        const config = try cf.getConfig(allocator, if (is_prod) .production else .local);
+        const config = cf.getConfig(allocator, if (is_prod) .production else .local);
         defer config.deinit();
 
         const url = try endpoint.formatUrl(config.base_url, params_slice, allocator);

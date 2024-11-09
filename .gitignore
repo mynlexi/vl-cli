@@ -5,3 +5,4 @@ endpoint_config.zig
 *_auth_key
 .env
 ./src/endpoint_config.zig
+./src/.env
