@@ -180,38 +180,105 @@ fn printCommandUsage(command: []const u8, endpoint: types.EndpointMap) !void {
 }
 
 fn makeRequest(allocator: std.mem.Allocator, url: []const u8, config: cf.Config) !void {
+    if (config.environment == .local) {
+        std.debug.print("\n=== Request Details ===\n", .{});
+        std.debug.print("URL: {s}\n", .{url});
+        std.debug.print("Header Name: {s}\n", .{config.auth.header_name});
+        std.debug.print("Header Value: {s}\n", .{config.auth.header_value});
+        std.debug.print("===================\n\n", .{});
+    }
+
     var client = std.http.Client{
-           .allocator = allocator,
-       };
-       defer client.deinit();
+        .allocator = allocator,
+    };
+    defer client.deinit();
 
-       var server_header_buffer: [8192]u8 = undefined;
+    var server_header_buffer: [8192]u8 = undefined;
+    const uri = try std.Uri.parse(url);
 
-       const uri = try std.Uri.parse(url);
+    var req = client.open(
+        .GET,
+        uri,
+        .{
+            .server_header_buffer = &server_header_buffer,
+            .headers = .{
+                .authorization = .{ .override = config.auth.header_value },
+            },
+            .extra_headers = &[_]std.http.Header{.{
+                .name = config.auth.header_name,
+                .value = config.auth.header_value,
+            }},
+        },
+    ) catch |err| {
+        if (config.environment == .local) {
+            std.debug.print("\n=== Error Opening Request ===\n", .{});
+            std.debug.print("Error: {s}\n", .{@errorName(err)});
+            // std.debug.print("URI Details:\n", .{});
+            //        std.debug.print("  Scheme: {?s}\n", .{uri.scheme});
+            //        std.debug.print("  Host: {?s}\n", .{uri.host});
+            //        std.debug.print("  Path: {?s}\n", .{uri.path});
+            if (uri.port != null) {
+                std.debug.print("  Port: {d}\n", .{uri.port.?});
+            }
+            std.debug.print("=========================\n\n", .{});
+        }
+        return err;
+    };
+    defer req.deinit();
 
-       var req = try client.open(
-           .GET,
-           uri,
-           .{
-               .server_header_buffer = &server_header_buffer,
-               .headers = .{
-                   .authorization = .{ .override = config.auth.header_value },
-               },
-               .extra_headers = &[_]std.http.Header{.{
-                   .name = config.auth.header_name,
-                   .value = config.auth.header_value,
-               }},
-           },
-       );
-       defer req.deinit();
+    req.send() catch |err| {
+        if (config.environment == .local) {
+            std.debug.print("\n=== Error Sending Request ===\n", .{});
+            std.debug.print("Error: {s}\n", .{@errorName(err)});
+            std.debug.print("=========================\n\n", .{});
+        }
+        return err;
+    };
 
-       try req.send();
-       try req.finish();
-       try req.wait();
+    req.finish() catch |err| {
+        if (config.environment == .local) {
+            std.debug.print("\n=== Error Finishing Request ===\n", .{});
+            std.debug.print("Error: {s}\n", .{@errorName(err)});
+            std.debug.print("=========================\n\n", .{});
+        }
+        return err;
+    };
 
-       const stdout = std.io.getStdOut().writer();
-       const content = try req.reader().readAllAlloc(allocator, 1024 * 1024);
-       defer allocator.free(content);
-       try stdout.print("{s}\n", .{content});
+    req.wait() catch |err| {
+        if (config.environment == .local) {
+            std.debug.print("\n=== Error Waiting for Response ===\n", .{});
+            std.debug.print("Error: {s}\n", .{@errorName(err)});
+            if (@intFromEnum(req.response.status) != 0) {
+                const phrase = req.response.status.phrase();
+                std.debug.print("Status: {d} - {s}\n", .{
+                    @intFromEnum(req.response.status),
+                    if (phrase) |p| p else "Unknown Status",
+                });
+            }
+            std.debug.print("=========================\n\n", .{});
+        }
+        return err;
+    };
 
+    if (config.environment == .local) {
+        std.debug.print("\n=== Response Details ===\n", .{});
+        const phrase = req.response.status.phrase();
+        std.debug.print("Status: {d} - {s}\n", .{
+            @intFromEnum(req.response.status),
+            if (phrase) |p| p else "Unknown Status",
+        });
+        std.debug.print("===================\n\n", .{});
+    }
+
+    const stdout = std.io.getStdOut().writer();
+    const content = try req.reader().readAllAlloc(allocator, 1024 * 1024);
+    defer allocator.free(content);
+
+    if (config.environment == .local) {
+        std.debug.print("\n=== Response Body ===\n", .{});
+    }
+    try stdout.print("{s}\n", .{content});
+    if (config.environment == .local) {
+        std.debug.print("===================\n\n", .{});
+    }
 }

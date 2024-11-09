@@ -4,6 +4,26 @@ A command-line interface tool for interacting with internal APIs. Built with Zig
 
 ## Installation
 
+### Using the Install Script
+
+```bash
+# Clone the repository
+git clone git@github.com:youorg/vlcli.git
+cd vlcli
+
+# Run the install script
+./install.sh
+```
+
+The install script will:
+
+1. Validate your environment configuration
+2. Build the project with optimizations
+3. Create appropriate symlinks
+4. Guide you through any necessary PATH configurations
+
+### Manual Installation
+
 1. Clone the repository
 
 ```bash
@@ -11,12 +31,17 @@ git clone git@github.com:youorg/vlcli.git
 cd vlcli
 ```
 
-2. Copy configuration templates
+2. Set up environment variables (either in shell or .env file)
 
 ```bash
-cp env_config.zig.template env_config.zig
-cp endpoint_config.zig.template endpoint_config.zig
-cp .env.example .env
+# Local environment
+export LOCAL_BASE_URL=http://localhost:3000
+export LOCAL_AUTH_HEADER_NAME=X-Auth-Token
+export LOCAL_AUTH_HEADER_VALUE=local_dev_key_here
+# Production environment
+export PROD_BASE_URL=https://app.getvoiceline.com
+export PROD_AUTH_HEADER_NAME=Voiceline-Search-Auth
+export PROD_AUTH_HEADER_VALUE=your_prod_key_here
 ```
 
 3. Build the project
@@ -35,19 +60,25 @@ sudo ln -s "$(pwd)/zig-out/bin/vlcli" /usr/local/bin/vlcli
 mkdir -p ~/bin
 ln -s "$(pwd)/zig-out/bin/vlcli" ~/bin/vlcli
 # Add to your .bashrc or .zshrc:
-# export PATH="$HOME/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
 ```
 
 ## Configuration
 
-### Environment Variables (.env)
+### Environment Variables
+
+You can configure the environment variables either through:
+
+1. A `.env` file (recommended for development)
+2. Shell environment variables (recommended for production)
+
+Example `.env` file:
 
 ```env
 # Local environment
 LOCAL_BASE_URL=http://localhost:3000
 LOCAL_AUTH_HEADER_NAME=X-Auth-Token
 LOCAL_AUTH_HEADER_VALUE=local_dev_key_here
-
 # Production environment
 PROD_BASE_URL=https://app.getvoiceline.com
 PROD_AUTH_HEADER_NAME=Voiceline-Search-Auth
@@ -64,7 +95,6 @@ pub const endpoints = struct {
             .{ .name = "id" },
         },
     };
-
     pub const related_contacts = EndpointMap{
         .path = "/search_special/related_contacts_v2",
         .params = &[_]ParamDefinition{
@@ -114,44 +144,6 @@ Available commands:
   search_patient <id> [filter]
 ```
 
-## Adding New Endpoints
-
-1. Open `endpoint_config.zig`
-2. Add your new endpoint following the pattern:
-
-```zig
-pub const your_endpoint = EndpointMap{
-    .path = "/api/your/path",
-    .params = &[_]ParamDefinition{
-        .{ .name = "required_param" },
-        .{ .name = "optional_param", .required = false },
-    },
-};
-```
-
-## Error Handling
-
-The CLI provides clear error messages:
-
-```bash
-# Missing required parameter
-$ vlcli related_contacts 123
-Error: Command 'related_contacts' requires 3 parameters, but got 1
-
-Usage: vlcli related_contacts <wsp_id> <externalId> <tagType>
-
-# Missing environment variable
-Error: Missing environment variable: PROD_AUTH_HEADER_NAME
-
-# Unknown command
-Error: Unknown command 'unknown'
-
-Available commands:
-  surgery <id>
-  related_contacts <wsp_id> <externalId> <tagType>
-  ...
-```
-
 ## Development
 
 ### Project Structure
@@ -159,12 +151,13 @@ Available commands:
 ```
 vlcli/
 ├── src/
-│   ├── main.zig         # Main CLI logic
-│   ├── env_config.zig   # Environment configuration (gitignored)
-│   └── endpoint_config.zig  # Endpoint definitions (gitignored)
-├── .env                 # Environment variables (gitignored)
-├── .env.example        # Template for environment variables
-└── README.md           # This file
+│   ├── main.zig           # Main CLI logic
+│   ├── env_config.zig     # Environment configuration
+│   └── endpoint_config.zig # Endpoint definitions
+├── .env                   # Environment variables (gitignored)
+├── .env.example          # Template for environment variables
+├── install.sh            # Installation script
+└── README.md             # This file
 ```
 
 ### Building for Development
@@ -180,9 +173,41 @@ zig build -Doptimize=ReleaseSafe
 zig build test
 ```
 
+### Environment Handling
+
+The CLI now supports runtime environment switching:
+
+- Environment configurations are baked into the binary at build time
+- Switch between environments using the `-p` flag
+- No need to rebuild for different environments
+- Environment variables must be present at build time
+
 ## Security Notes
 
-- Never commit `env_config.zig`, `endpoint_config.zig`, or `.env`
-- Always use environment variables for sensitive data
-- Production auth tokens should be kept secure
+- Keep `.env` file secure and gitignored
+- Use environment variables for sensitive data
+- Store production auth tokens securely
 - Consider implementing rate limiting for production endpoints
+- Avoid committing any files containing sensitive information
+- The binary contains both environments' configurations, keep it secure
+
+## Error Handling
+
+The CLI provides clear error messages:
+
+```bash
+# Missing required parameter
+$ vlcli related_contacts 123
+Error: Command 'related_contacts' requires 3 parameters, but got 1
+Usage: vlcli related_contacts <wsp_id> <externalId> <tagType>
+
+# Invalid environment configuration
+Error: Missing required environment variable: PROD_AUTH_HEADER_NAME
+
+# Unknown command
+Error: Unknown command 'unknown'
+Available commands:
+  surgery <id>
+  related_contacts <wsp_id> <externalId> <tagType>
+  ...
+```

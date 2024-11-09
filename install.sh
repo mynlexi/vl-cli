@@ -62,6 +62,17 @@ fi
 
 echo -e "\n${GREEN}Environment validation successful!${NC}"
 
+# Export environment variables
+echo "Exporting environment variables..."
+while IFS='=' read -r key value; do
+    [[ $key =~ ^[[:space:]]*$ ]] || [[ $key =~ ^# ]] && continue
+    key=$(echo "$key" | xargs)
+    value=$(echo "$value" | xargs | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+    export "$key=$value"
+done < .env
+
+
+
 
 # Check if zig is installed
 if ! command -v zig &> /dev/null; then
