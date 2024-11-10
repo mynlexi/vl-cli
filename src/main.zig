@@ -5,6 +5,7 @@ const json = std.json;
 const endpoints = @import("endpoint_config").endpoints;
 const cf = @import("env_config");
 const types = @import("types");
+const json_formatter = @import("json_formatter");
 
 // These need to be public so endpoint_config can use them
 pub const ParamDefinition = struct {
@@ -64,83 +65,82 @@ const EndpointMap = struct {
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        defer _ = gpa.deinit();
-        const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-        // Define our CLI parameters
-        const params = comptime clap.parseParamsComptime(
-            \\-h, --help            Display this help and exit.
-            \\-p, --prod            Use production environment.
-            \\<COMMAND>            Command to execute (e.g., surgery).
-            \\<ARGS>...            Arguments for the command.
-            \\
+    // Define our CLI parameters
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help            Display this help and exit.
+        \\-p, --prod            Use production environment.
+        \\<COMMAND>            Command to execute (e.g., surgery).
+        \\<ARGS>...            Arguments for the command.
+        \\
+    );
+
+    // Define our parsers
+    const parsers = comptime .{
+        .COMMAND = clap.parsers.string,
+        .ARGS = clap.parsers.string,
+    };
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, parsers, .{
+        .diagnostic = &diag,
+        .allocator = allocator,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return err;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0) {
+        try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return;
+    }
+
+    // Need at least a command
+    if (res.positionals.len == 0) {
+        std.debug.print("Error: Command required\n", .{});
+        try printAvailableCommands();
+        return error.MissingCommand;
+    }
+
+    const command = res.positionals[0];
+    const endpoint = endpoints.get(command) orelse {
+        try std.io.getStdErr().writer().print("Error: Unknown command '{s}'\n", .{command});
+        try printAvailableCommands();
+        return error.UnknownCommand;
+    };
+
+    // Get parameters
+    const params_slice = if (res.positionals.len > 1) res.positionals[1..] else &[_][]const u8{};
+    if (params_slice.len < endpoint.requiredParamCount()) {
+        try std.io.getStdErr().writer().print(
+            "Error: Command '{s}' requires {d} parameters, but got {d}\n",
+            .{ command, endpoint.requiredParamCount(), params_slice.len },
         );
+        try printCommandUsage(command, endpoint);
+        return error.NotEnoughParameters;
+    }
 
-        // Define our parsers
-        const parsers = comptime .{
-            .COMMAND = clap.parsers.string,
-            .ARGS = clap.parsers.string,
-        };
+    const is_prod = res.args.prod != 0;
 
-        var diag = clap.Diagnostic{};
-        var res = clap.parse(clap.Help, &params, parsers, .{
-            .diagnostic = &diag,
-            .allocator = allocator,
-        }) catch |err| {
-            diag.report(std.io.getStdErr().writer(), err) catch {};
-            return err;
-        };
-        defer res.deinit();
+    // Debug prints
+    std.debug.print("Command: {s}\n", .{command});
+    std.debug.print("Arguments: ", .{});
+    for (params_slice) |param| {
+        std.debug.print("{s} ", .{param});
+    }
+    std.debug.print("\nProduction mode: {}\n", .{is_prod});
 
-        if (res.args.help != 0) {
-            try clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
-            return;
-        }
+    // Build URL with parameters
+    const config = cf.getConfig(allocator, if (is_prod) .production else .local);
+    defer config.deinit();
 
-        // Need at least a command
-        if (res.positionals.len == 0) {
-            std.debug.print("Error: Command required\n", .{});
-            try printAvailableCommands();
-            return error.MissingCommand;
-        }
+    const url = try endpoint.formatUrl(config.base_url, params_slice, allocator);
+    defer allocator.free(url);
 
-        const command = res.positionals[0];
-        const endpoint = endpoints.get(command) orelse {
-            try std.io.getStdErr().writer().print("Error: Unknown command '{s}'\n", .{command});
-            try printAvailableCommands();
-            return error.UnknownCommand;
-        };
-
-        // Get parameters
-        const params_slice = if (res.positionals.len > 1) res.positionals[1..] else &[_][]const u8{};
-        if (params_slice.len < endpoint.requiredParamCount()) {
-            try std.io.getStdErr().writer().print(
-                "Error: Command '{s}' requires {d} parameters, but got {d}\n",
-                .{ command, endpoint.requiredParamCount(), params_slice.len },
-            );
-            try printCommandUsage(command, endpoint);
-            return error.NotEnoughParameters;
-        }
-
-        const is_prod = res.args.prod != 0;
-
-        // Debug prints
-        std.debug.print("Command: {s}\n", .{command});
-        std.debug.print("Arguments: ", .{});
-        for (params_slice) |param| {
-            std.debug.print("{s} ", .{param});
-        }
-        std.debug.print("\nProduction mode: {}\n", .{is_prod});
-
-        // Build URL with parameters
-        const config = cf.getConfig(allocator, if (is_prod) .production else .local);
-        defer config.deinit();
-
-        const url = try endpoint.formatUrl(config.base_url, params_slice, allocator);
-        defer allocator.free(url);
-
-        try makeRequest(allocator, url, config);
-
+    try makeRequest(allocator, url, config);
 }
 
 fn printAvailableCommands() !void {
@@ -277,7 +277,13 @@ fn makeRequest(allocator: std.mem.Allocator, url: []const u8, config: cf.Config)
     if (config.environment == .local) {
         std.debug.print("\n=== Response Body ===\n", .{});
     }
-    try stdout.print("{s}\n", .{content});
+    const use_colors = !json_formatter.isOutputPiped();
+
+    const formatted = try json_formatter.formatJson(allocator, content, true, use_colors);
+    defer allocator.free(formatted);
+
+    try stdout.writeAll(formatted);
+    // try stdout.print("{s}\n", .{content});
     if (config.environment == .local) {
         std.debug.print("===================\n\n", .{});
     }

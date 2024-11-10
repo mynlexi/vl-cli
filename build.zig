@@ -51,13 +51,13 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = .{ .src_path = .{
             .owner = b,
             .sub_path = "src/types.zig",
-        }},
+        } },
     });
     const env_config_module = b.addModule("env_config", .{
         .root_source_file = .{ .src_path = .{
             .owner = b,
             .sub_path = "src/env_config.zig",
-        }},
+        } },
         .imports = &.{
             .{ .name = "build_options", .module = env_options_module },
         },
@@ -66,10 +66,17 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = .{ .src_path = .{
             .owner = b,
             .sub_path = "src/endpoint_config.zig",
-        }},
+        } },
         .imports = &.{
             .{ .name = "types", .module = types_module },
         },
+    });
+
+    const json_formatter_module = b.addModule("json_formatter", .{
+        .root_source_file = .{ .src_path = .{
+            .owner = b,
+            .sub_path = "src/json_formatter.zig",
+        } },
     });
 
     // Rest of your build configuration remains the same
@@ -78,7 +85,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = .{ .src_path = .{
             .owner = b,
             .sub_path = "src/main.zig",
-        }},
+        } },
         .target = target,
         .optimize = optimize,
     });
@@ -88,6 +95,7 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("env_config", env_config_module);
     exe.root_module.addImport("types", types_module);
     exe.root_module.addImport("build_options", env_options_module);
+    exe.root_module.addImport("json_formatter", json_formatter_module);
 
     b.installArtifact(exe);
 
@@ -100,7 +108,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = .{ .src_path = .{
             .owner = b,
             .sub_path = "src/main.zig",
-        }},
+        } },
         .target = target,
         .optimize = optimize,
     });
