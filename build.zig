@@ -34,6 +34,7 @@ pub fn build(b: *std.Build) !void {
         std.debug.print("Error: PROD_AUTH_HEADER_VALUE environment variable must be set\n", .{});
         std.process.exit(1);
     };
+    const my_user_id = env.get("MY_USER_ID") orelse "0";
 
     // Add environment variables to options
     env_options.addOption([]const u8, "LOCAL_BASE_URL", local_base_url);
@@ -42,6 +43,7 @@ pub fn build(b: *std.Build) !void {
     env_options.addOption([]const u8, "PROD_BASE_URL", prod_base_url);
     env_options.addOption([]const u8, "PROD_AUTH_HEADER_NAME", prod_auth_header_name);
     env_options.addOption([]const u8, "PROD_AUTH_HEADER_VALUE", prod_auth_header_value);
+    env_options.addOption([]const u8, "MY_USER_ID", my_user_id);
 
     // Create modules
     const env_options_module = env_options.createModule();
@@ -79,6 +81,17 @@ pub fn build(b: *std.Build) !void {
         } },
     });
 
+    const utils_module = b.addModule("utils", .{
+        .root_source_file = .{ .src_path = .{
+            .owner = b,
+            .sub_path = "src/utils.zig",
+        } },
+        .imports = &.{
+            .{ .name = "types", .module = types_module },
+            .{ .name = "endpoint_config", .module = endpoint_config_module },
+        },
+    });
+
     // Rest of your build configuration remains the same
     const exe = b.addExecutable(.{
         .name = "vlcli",
@@ -96,6 +109,7 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("types", types_module);
     exe.root_module.addImport("build_options", env_options_module);
     exe.root_module.addImport("json_formatter", json_formatter_module);
+    exe.root_module.addImport("utils", utils_module);
 
     b.installArtifact(exe);
 
@@ -117,6 +131,7 @@ pub fn build(b: *std.Build) !void {
     unit_tests.root_module.addImport("env_config", env_config_module);
     unit_tests.root_module.addImport("types", types_module);
     unit_tests.root_module.addImport("build_options", env_options_module);
+    unit_tests.root_module.addImport("json_formatter", json_formatter_module);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

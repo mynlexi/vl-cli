@@ -6,62 +6,7 @@ const endpoints = @import("endpoint_config").endpoints;
 const cf = @import("env_config");
 const types = @import("types");
 const json_formatter = @import("json_formatter");
-
-// These need to be public so endpoint_config can use them
-pub const ParamDefinition = struct {
-    name: []const u8,
-    required: bool = true,
-};
-// Parameter definition for endpoint
-
-// Endpoint mapping with parameter definitions
-const EndpointMap = struct {
-    path: []const u8,
-    method: []const u8 = "GET",
-    params: []const ParamDefinition,
-
-    // Helper to format URL with parameters
-    pub fn formatUrl(
-        self: EndpointMap,
-        base_url: []const u8,
-        params: []const []const u8,
-        allocator: std.mem.Allocator,
-    ) ![]const u8 {
-        if (params.len < self.requiredParamCount()) {
-            return error.NotEnoughParameters;
-        }
-
-        var url = std.ArrayList(u8).init(allocator);
-        defer url.deinit();
-
-        // Add base URL
-        try url.appendSlice(base_url);
-        try url.appendSlice(self.path);
-
-        // Replace parameter placeholders with actual values
-        var param_index: usize = 0;
-        for (self.params) |param| {
-            if (param_index >= params.len and param.required) {
-                return error.MissingRequiredParameter;
-            }
-            if (param_index < params.len) {
-                try url.appendSlice("/");
-                try url.appendSlice(params[param_index]);
-            }
-            param_index += 1;
-        }
-
-        return try url.toOwnedSlice();
-    }
-
-    pub fn requiredParamCount(self: EndpointMap) usize {
-        var count: usize = 0;
-        for (self.params) |param| {
-            if (param.required) count += 1;
-        }
-        return count;
-    }
-};
+const utils = @import("utils");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -101,34 +46,45 @@ pub fn main() !void {
     // Need at least a command
     if (res.positionals.len == 0) {
         std.debug.print("Error: Command required\n", .{});
-        try printAvailableCommands();
+        try utils.printAvailableCommands();
         return error.MissingCommand;
     }
 
     const command = res.positionals[0];
     const endpoint = endpoints.get(command) orelse {
         try std.io.getStdErr().writer().print("Error: Unknown command '{s}'\n", .{command});
-        try printAvailableCommands();
+        try utils.printAvailableCommands();
         return error.UnknownCommand;
     };
 
     // Get parameters
     const params_slice = if (res.positionals.len > 1) res.positionals[1..] else &[_][]const u8{};
-    if (params_slice.len < endpoint.requiredParamCount()) {
+    const validation = try endpoint.validateAndFillParams(params_slice, cf.getMyUserId(), allocator);
+
+    defer if (validation.filled_params) |valiParams| allocator.free(valiParams);
+
+    if (!validation.valid) {
         try std.io.getStdErr().writer().print(
             "Error: Command '{s}' requires {d} parameters, but got {d}\n",
-            .{ command, endpoint.requiredParamCount(), params_slice.len },
+            .{
+                command,
+                validation.required_params,
+                validation.effective_params,
+            },
         );
-        try printCommandUsage(command, endpoint);
+        try utils.printCommandUsage(command, endpoint);
         return error.NotEnoughParameters;
     }
+
+    // Use either the filled params or original params
+    const params_to_use = validation.filled_params orelse params_slice;
 
     const is_prod = res.args.prod != 0;
 
     // Debug prints
     std.debug.print("Command: {s}\n", .{command});
     std.debug.print("Arguments: ", .{});
-    for (params_slice) |param| {
+    for (params_to_use) |param| {
         std.debug.print("{s} ", .{param});
     }
     std.debug.print("\nProduction mode: {}\n", .{is_prod});
@@ -137,49 +93,32 @@ pub fn main() !void {
     const config = cf.getConfig(allocator, if (is_prod) .production else .local);
     defer config.deinit();
 
-    const url = try endpoint.formatUrl(config.base_url, params_slice, allocator);
+    const url = try endpoint.formatUrl(config.base_url, params_to_use, allocator);
     defer allocator.free(url);
 
-    try makeRequest(allocator, url, config);
-}
+    switch (endpoint.response_type) {
+        .PrintOnly => {
+            _ = try makeRequest(allocator, url, config, endpoint);
+            return;
+        },
+        else => {
+            const maybe_response = try makeRequest(allocator, url, config, endpoint);
 
-fn printAvailableCommands() !void {
-    const stderr = std.io.getStdErr().writer();
-    try stderr.print("\nAvailable commands:\n", .{});
-
-    // Direct access to the struct fields instead of using get()
-    inline for (comptime std.meta.declarations(endpoints)) |decl| {
-        // Skip non-endpoint declarations (like the get function)
-        if (@typeInfo(@TypeOf(@field(endpoints, decl.name))) != .Struct) {
-            continue;
-        }
-        const endpoint = @field(endpoints, decl.name);
-        try stderr.print("  {s}", .{decl.name});
-        for (endpoint.params) |param| {
-            if (param.required) {
-                try stderr.print(" <{s}>", .{param.name});
-            } else {
-                try stderr.print(" [{s}]", .{param.name});
+            if (maybe_response) |response| {
+                defer allocator.free(response);
+                const stdout = std.io.getStdOut().writer();
+                try stdout.writeAll(response);
+                // how do i give this here to the next person?
+                return;
             }
-        }
-        try stderr.print("\n", .{});
+            return error.NoResponse;
+        },
     }
+
+    // try makeRequest(allocator, url, config, endpoint.response_type);
 }
 
-fn printCommandUsage(command: []const u8, endpoint: types.EndpointMap) !void {
-    const stderr = std.io.getStdErr().writer();
-    try stderr.print("\nUsage: vlcli {s}", .{command});
-    for (endpoint.params) |param| {
-        if (param.required) {
-            try stderr.print(" <{s}>", .{param.name});
-        } else {
-            try stderr.print(" [{s}]", .{param.name});
-        }
-    }
-    try stderr.print("\n", .{});
-}
-
-fn makeRequest(allocator: std.mem.Allocator, url: []const u8, config: cf.Config) !void {
+fn makeRequest(allocator: std.mem.Allocator, url: []const u8, config: cf.Config, endpoint: types.EndpointMap) !?[]const u8 {
     if (config.environment == .local) {
         std.debug.print("\n=== Request Details ===\n", .{});
         std.debug.print("URL: {s}\n", .{url});
@@ -270,21 +209,63 @@ fn makeRequest(allocator: std.mem.Allocator, url: []const u8, config: cf.Config)
         std.debug.print("===================\n\n", .{});
     }
 
-    const stdout = std.io.getStdOut().writer();
     const content = try req.reader().readAllAlloc(allocator, 1024 * 1024);
-    defer allocator.free(content);
+    // defer allocator.free(content);
 
-    if (config.environment == .local) {
-        std.debug.print("\n=== Response Body ===\n", .{});
+    switch (endpoint.response_type) {
+        .PrintOnly => {
+            // Current behavior
+            const stdout = std.io.getStdOut().writer();
+            const use_colors = !json_formatter.isOutputPiped();
+            const formatted = try json_formatter.formatJson(allocator, content, true, use_colors);
+            defer allocator.free(formatted);
+            try stdout.writeAll(formatted);
+            if (config.environment == .local) {
+                std.debug.print("===================\n\n", .{});
+            }
+            allocator.free(content);
+            return null;
+        },
+        .ReturnJson => {
+            std.debug.print("======RETURN JSON\n\n", .{});
+
+            // Return the raw JSON for chaining
+            return content;
+        },
+        .Custom => {
+            if (endpoint.json_field) |field| {
+                var parsed = try std.json.parseFromSlice(std.json.Value, allocator, content, .{});
+                defer parsed.deinit();
+
+                if (parsed.value.object.get(field)) |value| {
+                    if (value == .string) {
+                        // Clone the string to ensure it survives after parsed.deinit()
+                        const result = try allocator.dupe(u8, value.string);
+                        allocator.free(content);
+                        return result;
+                    }
+                }
+
+                allocator.free(content);
+                return error.FieldNotFound;
+            }
+
+            return content;
+        },
     }
-    const use_colors = !json_formatter.isOutputPiped();
 
-    const formatted = try json_formatter.formatJson(allocator, content, true, use_colors);
-    defer allocator.free(formatted);
+    // if (config.environment == .local) {
+    //     std.debug.print("\n=== Response Body ===\n", .{});
+    // }
+    // const use_colors = !json_formatter.isOutputPiped();
 
-    try stdout.writeAll(formatted);
-    // try stdout.print("{s}\n", .{content});
-    if (config.environment == .local) {
-        std.debug.print("===================\n\n", .{});
-    }
+    // const formatted = try json_formatter.formatJson(allocator, content, true, use_colors);
+    // defer allocator.free(formatted);
+
+    // try stdout.writeAll(formatted);
+    // // try stdout.print("{s}\n", .{content});
+    // if (config.environment == .local) {
+    //     std.debug.print("===================\n\n", .{});
+    // }
+    return null;
 }

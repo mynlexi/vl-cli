@@ -54,6 +54,17 @@ for var in "${required_vars[@]}"; do
     fi
 done
 
+optionalVars=(
+    "MY_USER_ID"
+)
+
+for var in "${optionalVars[@]}"; do
+    if ! check_env_var "$var"; then
+        echo -e "${YELLOW}Warning: ${var} not found in .env${NC}"
+    fi
+done
+
+
 if [ $failed -eq 1 ]; then
     echo -e "\n${RED}Environment validation failed!${NC}"
     echo -e "${YELLOW}Please check your .env file and ensure all required variables are set.${NC}"

@@ -20,6 +20,7 @@ pub const AuthConfig = struct {
 pub const Config = struct {
     base_url: []const u8,
     auth: AuthConfig,
+    myUserId: ?[]const u8,
     allocator: std.mem.Allocator,
     environment: Environment,
 
@@ -27,6 +28,14 @@ pub const Config = struct {
         _ = self;
     }
 };
+
+pub fn getMyUserId() ?[]const u8 {
+    const myUserId: ?[]const u8 = if (std.mem.eql(u8, build_options.MY_USER_ID, "0"))
+        null
+    else
+        build_options.MY_USER_ID;
+    return myUserId;
+}
 
 pub fn getConfig(allocator: std.mem.Allocator, env: Environment) Config {
     const base_url = switch (env) {
@@ -44,12 +53,15 @@ pub fn getConfig(allocator: std.mem.Allocator, env: Environment) Config {
         .production => build_options.PROD_AUTH_HEADER_VALUE,
     };
 
+    const myUserId: ?[]const u8 = getMyUserId();
+
     return Config{
         .base_url = base_url,
         .auth = AuthConfig{
             .header_name = header_name,
             .header_value = header_value,
         },
+        .myUserId = myUserId,
         .allocator = allocator,
         .environment = env,
     };
