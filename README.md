@@ -88,22 +88,7 @@ PROD_AUTH_HEADER_VALUE=your_prod_key_here
 ### Endpoint Configuration (endpoint_config.zig)
 
 ```zig
-pub const endpoints = struct {
-    pub const surgery = EndpointMap{
-        .path = "/api/test/surgery",
-        .params = &[_]ParamDefinition{
-            .{ .name = "id" },
-        },
-    };
-    pub const related_contacts = EndpointMap{
-        .path = "/search_special/related_contacts_v2",
-        .params = &[_]ParamDefinition{
-            .{ .name = "wsp_id" },
-            .{ .name = "externalId" },
-            .{ .name = "tagType" },
-        },
-    };
-};
+
 ```
 
 ## Usage Examples

@@ -11,6 +11,36 @@ pub const ResponseType = enum {
     Custom, // For special handling cases
 
 };
+pub const Platform = enum {
+    ios,
+    android,
+};
+
+pub const ChainContext = struct {
+    platform: Platform,
+    allocator: std.mem.Allocator,
+};
+// New types for the command chaining system
+pub const SystemCommand = struct {
+    command: []const u8,
+    args: []const []const u8,
+    platform_variants: ?struct {
+        ios: ?[]const u8,
+        android: ?[]const u8,
+    } = null,
+};
+pub const TransformError = error{ AllocationError, InvalidInput, OutOfMemory };
+pub const TransformFn = *const fn (context: ChainContext, input: []const u8) TransformError![]const u8;
+
+pub const CommandStep = union(enum(u8)) {
+    endpoint: []const u8 = 0,
+    system: []const u8 = 1,
+    transform: ?TransformFn = 2, // Using function pointer type now
+};
+
+pub const ChainedCommand = struct {
+    steps: []const CommandStep,
+};
 
 pub const EndpointMap = struct {
     path: []const u8,
